@@ -18,7 +18,7 @@
 When we compare two numbers to find the larger one, we are essentially checking digits from the most to least significant bit, and the first bit that is less than the corresponding bit in the other number, is the number that is less.
 To give an example, consider the following algorithm:
 
-\begin{lstlisting}[label={alg:find_larger_number}]
+\begin{lstlisting}[label={alg:find_larger_number}, caption={Algorithm to find the larger of two numbers.}]
 	LARGER_NUMBER($a$, $b$):
     Suppose $a = a_1a_2a_3\dots a_k$ and similar for $b$
 
@@ -40,13 +40,162 @@ The idea for this paper is to develop such a parallel comparison algorithm, and 
 This sort was already developed by \cite{ghosh} in 2019, but lacked formal details about the correctness of the proof, and justifications for time (and space) complexity, so this paper goes more in depth in those areas\footnote{I also came up with this sorting algorithm independently, but that's not really a big deal because I doubt this algorithm is a new algorithm.}.
 Their paper demonstrated that this algorithm can be implemented on FPGAs, with small area size and with fast runtimes.
 
+Also mention some limitations of another hardware sort, the one that just maps you to the index (https://www.rroij.com/open-access/hardware-solution-to-sorting-algorithms-a-review.php?aid=90998)
+Issues with distinct numbers, also $2^k$ space potentially.
+
 \section{Algorithm}
 
 For the rest of the paper, we are going to assume that we are sorting binary numbers with $k$ bits.
 
-We first introduce the algorithm for finding the largest of $n$ numbers.
+Also, whenever we have some binary number $x_i$, we assume it can be represented as 
+\begin{equation}
+  x_i = x_{i1}x_{i2}\dots x_{in},
+\end{equation}
+where $x_i1$ is the most significant bit.
+
+Before we introduce the algorithm to find the largest of $n$ numbers, we will derive the motivation for how we construct this algorithm.
+
+The idea is, when are scanning from the most significant bit to the least significant bit, we will ``eliminate'' numbers which are clearly not the largest.
+How do we know which numbers are the largest? Well if we look at some digit, let's say the $i^\text{th}$ digit, if there is some number with 1 in that digit, then it must be the case that the largest number will have 1 in that digit, otherwise it is smaller.
+The caveat here is, we have to also be careful with numbers that are already eliminated from previous rounds. E.g. if we have $1101, 1011$, even though $1011$ is larger in the \nth{3} digit than $1101$, it was already eliminated in the \nth{2} round.
+
+With this in mind, let us introduce a few definitions.
+
+\begin{definition}
+  For some number $x_i$, define 
+  \begin{equation}
+    x'_{ij} = \begin{cases}
+      x_{ij} \land \overline{\pa{
+      x_{i, j-1} \xor b_{j-1}
+    }} & j > 1 \\
+    x_{ij} \land \sigma_i & j = 1
+    \end{cases}
+  \end{equation}.
+
+  We define 
+  \begin{equation}
+    b_j = \biglor_{i=1}^n x'_{ij}
+  \end{equation}
+
+  We then define the result of comparison for each number
+  \begin{equation}
+    r_i = \overline{
+      \pa{
+        x'_{ik} \xor b_{k}
+      }
+    }
+  \end{equation}
+
+  Finally, we define the \textbf{starter qualifier variable} as 
+  \begin{equation}
+    \sigma_i = \begin{cases}
+      1 & \text{if we are considering $x_i$ in this comparison round}\\
+      0 & \text{if we are not considering $x_i$}
+    \end{cases}
+  \end{equation}
+\end{definition}
+
+Intuitively, what is happening here is that we define a new $x'_{ij}$ that sets the bit to 0 if the number has already been disqualified, otherwise leaves it alone.
+Then, $b_j$ is just taking the logic OR of all of the digits, and represents the largest digit for that digit. We use $b_j$ to qualify numbers for the next round of comparisons.
+The last result $r_i$ is equal to 1 if the number is the largest in the group, otherwise it is 0 if the number is not.
+Finally, we have $\sigma_i$, because once we find largest numbers, we want to disqualify them for the next comparison set, since we want to find the next largest numbers.
+
+With these definitions, we now have a logic expression that finds the largest numbers in some set of numbers.
+Suppose this circuit is defined as 
+
+\begin{definition}
+  \te{FIND\_LARGEST\_NUMBER}. This circuit is defined as 
+  \begin{itemize}
+    \item \textbf{Input}: $x_1, x_2, \dots, x_n, \sigma_1, \sigma_2, \dots, \sigma_n$
+    \item \textbf{Output}: $r_1, r_2, \dots, r_n$
+  \end{itemize}
+\end{definition}
+
+\begin{lemma}
+  \te{FIND\_LARGEST\_NUMBER} correctly finds the largest of $n$ numbers.
+  \label{lemma:largest_number}
+\end{lemma}
+
+% TODO: Build example circuit in appendix
+For an example of such a circuit, please see the appendix.
+
+Also give an example of how this algorithm would actually run, like Ghosh et al did.
+
+\begin{lstlisting}[label={alg:sort}, caption={Sorting algorithm with parallel comparison.}]
+  SORT($x_1, x_2, \dots, x_n$):
+    sorted_nums = []
+
+    set $\forall i, \sigma_i = 1$
+
+    while $\biglor \sigma_i = 1$:
+      $r_1, r_2, \dots, r_n$ = FIND_LARGEST_NUMBER($x_1, x_2, \dots, x_n$)
+
+      let $i'$ be the first of the $r_{i'} = 1, i' \in \pbrc{1, 2, \dots, n}$
+
+      // We add the largest element to our sorted list
+      $\sigma_{i'} = 0$
+      sorted_nums.append(x_{i'})
+
+    return sorted_nums
+\end{lstlisting}
+
+\begin{theorem}
+  The algorithm described in \ref{alg:sort} is a sorting algorithm that runs in $O(n)$ time for fixed integer bit size, and takes $O(n^2)$ resources to build.
+\end{theorem}
+\begin{proof}
+  First, we will prove correctness.
+
+  We know from \ref{lemma:largest_number} that \findLargest correctly finds the largest of $n$ numbers.
+  In our algorithm, we are finding the largest number, and adding it to \te{sorted\_nums}, and disqualifying it from subsequent rounds.
+  This means in \te{sorted\_nums}, every number is larger than all numbers that follow it in order, which means \te{sorted\_nums} is indeed sorted.
+
+  For runtime, we have $n$ comparison sets, where we find the largest number. 
+  For each of these sets, we run \findLargest, which takes $O(k)$ time.
+  To find the first $r_i$ that is equal to 1, we use the same mask encoder circuit as \cite{ghosh}, which has a constant critical path, with runs in constant time.
+  Adding to the \te{sorted\_nums} list takes $O(1)$ time.
+  Therefore, each comparison set runs in $O(k)$ time, and with $n$ sets, we have $O(nk)$ total runtime. As we have said that $k$ is constant, the runtime is $O(n)$.
+
+  To calculate the additional space needed, we are going to consider 
+  \begin{itemize}
+    \item Gates:
+    \begin{itemize}
+      \item $x'_{ij}$ contributes 2 gates at most, and we have $nk$ of these.
+      \item $b_j$ requires $n$ gates, and we have $k$ of these, so $nk$ total here.
+      \item $r_i$ requires 1 gate, and we have $n$ of these.
+    \end{itemize}
+
+    \item Wires:
+    \begin{itemize}
+      \item $x'_{ij}, b_j, r_i$ all contribute the same order of wires as the gates they have
+      \item The mask encoder circuit to find the first $r_i = 1$ takes $\sum_{i=1}^n$ wires, so we have $O(n^2)$ wires here.
+    \end{itemize}
+    
+    \item Storage:
+    \begin{itemize}
+      \item $\sigma_i$: Each $\sigma_i$ is one bit, and we have $n$ of these
+      \item \te{sorted\_nums}: We are storing all of the numbers in a sorted array, as this is not an in-place sort so we use $O(nk)$ space here.
+    \end{itemize}
+  \end{itemize}
+
+  Combining all of these components, we have 
+  \begin{equation}
+    O\pa{
+      nk + nk + n + n^2 + n + n + nk
+    } = O(nk + n^2) = O(n^2).
+  \end{equation}
+\end{proof}
+
+\section{Discussion}
+
+Talk about pipelining and how it's not really necessary
+
+Mention how this is hard to implement in the software level, need large amounts of hardware control.
 
 \bibliographystyle{unsrtnat}
 \bibliography{references}
+
+\appendix
+
+Explain the parallel operation of the big OR gates.
 
 \end{document}
